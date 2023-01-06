@@ -1,0 +1,269 @@
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/wait.h> // wait를 쓰기 위해서 선언
+#include <sys/types.h>
+#include <signal.h>
+#include <fcntl.h> //file을 읽기위해 사용 input, output이용을 위해
+
+#define MAX_LINE 80 // MAX_LINE 이라는 전역변수를 80이라고선언
+
+char *first;
+char *second;   //<,> 이거 두개의 명령어를 받을때 그전과 후로 문자열을 파싱하기위해 사용
+
+int main(void)
+{
+	char inpu[MAX_LINE / 2 + 1];
+	char *args[MAX_LINE / 2 + 1]; //크기가 41로 선언되었고, execvp의 함수를 돌리는데 필요해서 선언하게 되었다. command역할을 수행해준다.
+	int should_run = 1;			  // while문을 돌리는데 선언
+	int fd[2],j;					  // pipe함수를 선언해서 쓰는데 부모프로세스 자식프로세스가 있으므로 pipe함수가 int배열의 크기 2개로 선언해야 해서 사용
+	char *pipe1[MAX_LINE / 2 + 1];  //파이프 |를 조건으로 앞
+	char *pipe2[MAX_LINE / 2 + 1];  //파이프 |를 조건으로 뒤
+	
+	while (should_run) //무한반복문
+	{ // should_run = 밑에 부모노드를 찾고 할때 까지 무한반복
+		printf("osh> ");
+		gets(inpu);   //문자열 형태의 값을 받아준다
+		fflush(stdout); // write 시스템 콜이 printf보다 빠르기 때문에 쓰이고, 버퍼를 지워준다
+		pid_t pid;  //프로세스를 식별하기 위해 할당하는 고유의 번호이다.
+
+		int count = 0, x = 0;
+		int fd1; //파일은 열고 닫기를 수행할 때 쓸려고하는 변수
+		char *argv = strtok(inpu, " ");  //inpu의 " "을 기점으로 받겠다.
+
+		while (argv != NULL) //문자열의 공백이 나타나기 전까지 받겠다.
+		{
+			args[x] = argv;
+			argv = strtok(NULL, " ");
+			x++;
+		}
+		if(strcmp(args[5],"&") == 0)  {  // pipe를 이용할때 마지막에 &가 들어올 경우를 확인하기 위해 나두었다
+			j=10;
+		}
+
+		if (strcmp(args[0], "exit") == 0) //exit를 입력할경우 함수를 종료한다는 것이다.
+		{
+			printf("bye\n");
+			break;
+		}
+		else if (x == 2 || x==1)
+		{ //명령어 + 옵션의 형태인 경우 크기가 두개여서 명령어대로 옵션을 돌리기 위함
+			args[x] = NULL; ////마지막에는 NULL값을 넣어준다
+			pid = fork(); // fork를 사용해서 자식프로세스를 포크한다.
+			
+			if (pipe(fd) < 0)
+			{
+				perror("pipe error\n");
+				exit(0);
+			}
+
+			if (pid == 0)
+			{
+				execvp(args[0], args); // args는 인수와 함께 전체 명령이 포함된다. args[0]부터 경로를 탐색해서 완성한다.
+				perror("failed ");
+				exit(0);
+			}
+
+			else
+			{
+				pid = wait(NULL);  //부모프로세스가 자식프로세스가 종료될 때까지 기다린다.
+			}
+			printf("\n");
+		}
+		
+		else if (strcmp(args[2], "&") == 0)
+		{
+			args[2] = NULL;
+			pid = fork();
+			if(pid < 0) {
+				printf("fork error\n");
+				exit(1);
+			}
+			else if(pid == 0) {
+				execvp(args[0],args);
+				exit(0);
+			}
+			
+
+		}
+		else if (strcmp(args[2], ">") == 0 || strcmp(args[1], ">") == 0)
+		{ // 파일을 어떻게 하겟다 output redirection
+			////명령어 + 옵션 > 파일명을 받아서 2번째에 > 이 오게 만들었다.
+			char *arg[MAX_LINE / 2 + 1]; //새로운 배열생성한것은 이부분에서 따로 돌기위해서 생성
+			
+			first = strtok(inpu,">");   // > 문자열 전까지를 짤라서 first에 넣겠다
+			second = strtok(NULL,">");  // > 문자열 후를 짤라서 second에 넣겠다
+			int index = 0;
+			arg[index] = strtok(first," ");
+
+			while(arg[index]) {   // >를 기점으로 전에는 first변수에 넣어주고, 그 이후에는 second에 값을 넣어준다.
+				index++;
+				arg[index] = strtok(NULL," ");
+			}
+			
+			pid = fork(); // fork를 사용해서 자식프로세스를 포크한다.
+			if(strcmp(args[x-1], "&") == 0) {
+				if (pid == 0) 
+				{
+					args[x-1] = NULL;
+					if(strcmp(args[2], ">") == 0)
+						fd1 = open(args[3], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+					else if(strcmp(args[1], ">") == 0)
+						fd1 = open(args[2], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+					// open의 첫번째는 파일명을 의미하는데 문자열 파싱이 미미해서 이렇게 두었다.
+					// 각각은 파일은 읽고, 생성한다는 의미이다.
+					//O_WRONLY는 파일을 쓰기 전용으로 open 한다는 것입니다. O_CREAT는 파일이 존재하지 않으면 파일을 새로 만들어라는 것이고, 
+					//O_TRUNC는 O_WRONLY로서 open 시에 이미 존재하는 파일이면 파일의 내용을 삭제하여 파일의 크기를 
+					//0으로 한다는 것입니다.
+
+					dup2(fd1, STDOUT_FILENO);    // 모든 출력이 fd라는 파일 디스크립터로 write됩니다. close로 출력된 것을 닫아줍니다.
+					close(fd1);
+
+					execvp(arg[0], arg);
+					exit(0);
+				}
+			}
+			else {
+				if (pid == 0) 
+				{
+					args[x]=NULL;
+					if(strcmp(args[2], ">") == 0)
+						fd1 = open(args[3], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+					else if(strcmp(args[1], ">") == 0)
+						fd1 = open(args[2], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+					// open의 첫번째는 파일명을 의미하는데 문자열 파싱이 미미해서 이렇게 두었다.
+					// 각각은 파일은 읽고, 생성한다는 의미이다.
+					//O_WRONLY는 파일을 쓰기 전용으로 open 한다는 것입니다. O_CREAT는 파일이 존재하지 않으면 파일을 새로 만들어라는 것이고, 
+					//O_TRUNC는 O_WRONLY로서 open 시에 이미 존재하는 파일이면 파일의 내용을 삭제하여 파일의 크기를 
+					//0으로 한다는 것입니다.
+
+					dup2(fd1, STDOUT_FILENO);   // 모든 출력이 fd라는 파일 디스크립터로 write됩니다. close로 출력된 것을 닫아줍니다.
+					close(fd1);
+
+					execvp(arg[0], arg);
+					exit(0);
+				}
+				wait(NULL);
+			}
+		}
+		else if (strcmp(args[2], "<") == 0 || strcmp(args[1], "<") == 0) { // 파일을 어떻게 하겟다 input redirection, 
+			//명령어 + 옵션 < 파일명을 받아서 2번째에 < 이 오게 만들었다.
+			char *arg[MAX_LINE / 2 + 1]; //새로운 배열생성한것은 이부분에서 따로 돌기위해서 생성
+			first = strtok(inpu,"<");
+			second = strtok(NULL,"<");
+			int index = 0;
+			arg[index] = strtok(first," ");
+			while(arg[index]) {
+				index++;
+				arg[index] = strtok(NULL," ");
+			}
+			pid = fork(); // fork를 사용해서 자식프로세스를 포크한다.
+			if(strcmp(args[x-1], "&") == 0) {  //&로 background로 돌리기 때문에 wait를 걸지 않습니다.
+												//즉 부모프로세스가 자식프로세스를 기다리지 않는다
+				if (pid == 0)
+				{
+					args[x-1]=NULL;
+					if(strcmp(args[2], "<") == 0)
+						fd1 = open(args[3], O_RDONLY | O_CREAT,0644);
+					else if(strcmp(args[1], "<") == 0)
+						fd1 = open(args[2], O_RDONLY | O_CREAT,0644);
+
+					// O_RDONLY는 파일을 읽기 전용으로 open한다는 말입니다.
+ 					//O_CREAT는 파일이 존재하지 않으면 파일을 새로 만들어라는 것입니다
+					//0644는 0400, 0200, 040, 04를 더한 값이어서 특정 파일에 대한 권한이다.
+					//의미는 이 파일에 대한 소유자는 읽기와 쓰기, 그룹과 기타 사용자는 읽기 권한이 있음을 의미합니다
+
+					dup2(fd1, STDIN_FILENO);  //dup2는 두 번째 인자를 첫 번째 인자로 바꾸어버립니다
+					close(fd1);
+
+					execvp(arg[0], arg);
+					exit(0);
+				}
+			}
+			else {  //wait로 부모 프로세스는 자식 프로세스가 종료될 때까지 기다리려고 wait를 걸었다.
+				args[x]=NULL; //마지막 문자에 NULL값을 넣었는데 이는 execvp가 마지막에 종료되기위함이다.
+				if (pid == 0)
+				{
+					if(strcmp(args[2], "<") == 0)
+						fd1 = open(args[3], O_RDONLY | O_CREAT,0644);
+					else if(strcmp(args[1], "<") == 0)
+						fd1 = open(args[2], O_RDONLY | O_CREAT,0644);
+
+					// O_RDONLY는 파일을 읽기 전용으로 open한다는 말입니다.
+ 					//O_CREAT는 파일이 존재하지 않으면 파일을 새로 만들어라는 것입니다
+					//0644는 0400, 0200, 040, 04를 더한 값이어서 특정 파일에 대한 권한이다.
+					//의미는 이 파일에 대한 소유자는 읽기와 쓰기, 그룹과 기타 사용자는 읽기 권한이 있음을 의미합니다
+
+					dup2(fd1, STDIN_FILENO); //dup2는 두 번째 인자를 첫 번째 인자로 바꾸어버립니다
+					close(fd1);
+
+					execvp(arg[0], arg);
+					exit(0);
+				}
+				wait(NULL);
+			}
+		}
+
+		else if(strcmp(args[2], "|") == 0)
+		{ // pipe의 경우 2번째 인자에서 |를 입력받은경우 명령어1 + 옵션 + | + 명령어2 + 옵션을 받을 경우이다.
+			char *cmdvectorpipe1[MAX_LINE / 2 + 1];
+    		char *cmdvectorpipe2[MAX_LINE / 2 + 1];
+			// //cmdvectorpipe1, cmdvectorpipe2를 사용한 것은 두 개의 프로세스를 연결하기 위해서 각각의 문자형 포인터를 선언한 것입니다
+			int fds[2]; //pipe를 handling하기 위해서 크기가 2인 fds를 선언하였다.
+			pipe(fds);
+			int i;
+			for(i=0;i<2;++i) { //명령어1 + 옵션을 받을경우 args 0,1번째 인자를 cmdvectorpipe1에 넣어준다.
+				cmdvectorpipe1[i] = args[i];
+			}
+			cmdvectorpipe1[2] = NULL;
+			
+			for(i=0;i<2;++i) {   // //명령어2 + 옵션을 받을경우 args 3,4번째 인자를 cmdvectorpipe2에 넣어준다.
+				cmdvectorpipe2[i] = args[i+3];
+			}
+			cmdvectorpipe2[2] = NULL;
+			pid_t pid1 = fork();
+			
+			if(j==10) {
+				args[x-1]=NULL;
+				if(pid1 < 0) { //pipe(fd)<0은 연결이 제대로 안대는 경우가 있기 때문에 오류 방지용으로 코드를 넣게 되었다.
+					return 1;
+				}
+				//execvp를 사용해서 각각 cmdvectorpipe1, cmdvectorpipe2가 경로에서 탐색되어서 실행되는 것을 알 수 있다.
+				if(pid1 == 0) {  
+					close(fds[0]);  //pipe는 함수의 열고 닫기가 중요해서 0번째를 닫아준다.
+					dup2(fds[0],0);  //dup2는 두 번째 인자를 첫 번째 인자로 바꾸어버립니다. 0번째에 복제를해서 실행하게 한다.
+					execvp(cmdvectorpipe2[0],cmdvectorpipe2); //execvp를 사용해서 cmdvectorpipe2가 경로에서 탐색되어서 실행되는 것을 알 수 있습니다. 
+					exit(0);
+				}
+				else {
+					close(fds[1]); //pipe는 함수의 열고 닫기가 중요해서 1번째를 닫아준다.
+					dup2(fds[1],1); //dup2는 두 번째 인자를 첫 번째 인자로 바꾸어버립니다. 1번째에 복제를해서 실행하게 한다.
+					execvp(cmdvectorpipe1[0],cmdvectorpipe1); //execvp를 사용해서 cmdvectorpipe1가 경로에서 탐색되어서 실행되는 것을 알 수 있습니다. 
+					exit(0);
+				}
+			}
+			else {
+				args[x-1]=NULL;
+				if(pid1 < 0) {
+					return 1;
+				}
+				
+				if(pid1 == 0) {
+					close(fds[0]); //pipe는 함수의 열고 닫기가 중요해서 0번째를 닫아준다.
+					dup2(fds[0],0);   //dup2는 두 번째 인자를 첫 번째 인자로 바꾸어버립니다. 0번째에 복제를해서 실행하게 한다.
+					execvp(cmdvectorpipe2[0],cmdvectorpipe2); //execvp를 사용해서 cmdvectorpipe1가 경로에서 탐색되어서 실행되는 것을 알 수 있습니다.
+					exit(0);
+				}
+				else {
+					close(fds[1]);  //pipe는 함수의 열고 닫기가 중요해서 0번째를 닫아준다.
+					dup2(fds[1],1);  //dup2는 두 번째 인자를 첫 번째 인자로 바꾸어버립니다. 0번째에 복제를해서 실행하게 한다.
+					execvp(cmdvectorpipe1[0],cmdvectorpipe1);  //execvp를 사용해서 cmdvectorpipe1가 경로에서 탐색되어서 실행되는 것을 알 수 있습니다
+					exit(0);
+				}
+				wait(NULL); //&와 차이가 부모프로세스가 자식프로세스를 기다려주는가인데 지금은 부모프로세스가 기달리는중이다.
+			}
+		}
+	}
+	return 0;   //  return 0는 함수의 종료조건을 나타내서 함수를 알맞게 종료했습니다.
+}
